@@ -16,6 +16,7 @@ namespace DateTimeConverter
         const string FORMAT_EXEL = "Excel      : {0}";
         const string FORMAT_NTPT = "NTP Time   : {0}";
         const string FORMAT_UNIX = "UNIX Epoch : {0}";
+        const string FORMAT_WNNT = "Win NT     : {0}";
 
         const string ERROR_DOMAIN = "domain error";
 
@@ -23,6 +24,7 @@ namespace DateTimeConverter
 
         DateTime NtpBase = new DateTime(1900, 1, 1);
         DateTime UnixEpochBase = new DateTime(1970, 1, 1);
+        DateTime WinNTBase = new DateTime(1601, 1, 1);
 
         List<CultureInfo> cultures;
         string[] formats = new[]{
@@ -57,6 +59,11 @@ namespace DateTimeConverter
             // Format combobox items
             cbxFormat.Items.AddRange(formats);
             cbxFormat.SelectedIndex = 0;
+
+            // TimeZone combobox items
+            var zones = TimeZoneInfo.GetSystemTimeZones();
+            cbxTimeZone.DataSource = zones;
+            cbxTimeZone.SelectedItem = TimeZoneInfo.Local;
 
             // Culture combobox items
             cultures = CultureInfo.GetCultures(CultureTypes.SpecificCultures)
@@ -98,10 +105,21 @@ namespace DateTimeConverter
             tbx.ScrollToCaret();
         }
 
-        private string ToReadable(DateTime dt)
+        private string ToReadable(DateTime _dt)
         {
             string formatString = cbxFormat.Text;
-            string formattedDateTime = dt.ToString(formatString);
+            string formattedDateTime;
+            TimeZoneInfo selectedTimeZone = (TimeZoneInfo)cbxTimeZone.SelectedItem;
+            try
+            {
+                DateTime dt = TimeZoneInfo.ConvertTime(_dt, TimeZoneInfo.Local, selectedTimeZone);
+                TimeSpan ts = selectedTimeZone.GetUtcOffset(dt);
+                formattedDateTime = String.Format("{0} UTC{1:+0;-0;\\ }{2::00;\\ ;\\ }", dt.ToString(formatString), ts.Hours, ts.Minutes).TrimEnd();
+            }
+            catch
+            {
+                formattedDateTime = String.Format("Bad format specifier. \"{0}\"", formatString);
+            }
             return formattedDateTime;
         }
 
@@ -141,20 +159,6 @@ namespace DateTimeConverter
             return Convert.ToUInt32(ts.TotalSeconds);
         }
 
-        #region <イベントハンドラ>
-        private void Form1_Load(object sender, EventArgs e)
-        {
-            SetNow();
-        }
-
-        private void cbxCulture_SelectedIndexChanged(object sender, EventArgs e)
-        {
-            int selectedIndex = cbxCulture.SelectedIndex;
-            var currentCulture = cultures[selectedIndex];
-            Thread.CurrentThread.CurrentCulture = currentCulture;
-            toolTip1.SetToolTip(cbxCulture, currentCulture.Name);
-        }
-
         private void SetNow()
         {
             var now = DateTime.Now;
@@ -163,26 +167,11 @@ namespace DateTimeConverter
             tbxInput3.Text = ToNtp(now).ToString();
             tbxInput4.Text = ToUnixEpoch(now).ToString();
             tbxInput5.Text = now.ToOADate().ToString();
+            tbxInput6.Text = now.ToFileTime().ToString();
         }
 
-        private void btnNow_Click(object sender, EventArgs e)
+        private void MakeOutput(DateTime dt, ref string output)
         {
-            SetNow();
-            //btnConv1.PerformClick();
-        }
-
-        private void btnJustTime_Click(object sender, EventArgs e)
-        {
-            var dt = dtpInput1.Value;
-            dt = new DateTime(dt.Year, dt.Month, dt.Day, 0, 0, 0);
-            dtpInput1.Value = dt;
-            //btnConv1.PerformClick();
-        }
-
-        private void btnConv1_Click(object sender, EventArgs e)
-        {
-            DateTime dt = dtpInput1.Value;
-            string output = "";
             output += String.Format(FORMAT_READ, ToReadable(dt)) + RTN;
             output += String.Format(FORMAT_TICK, dt.Ticks) + RTN;
             if (IsNtpCompatible(dt))
@@ -209,11 +198,55 @@ namespace DateTimeConverter
             {
                 output += String.Format(FORMAT_EXEL, ex.ToString()) + RTN;
             }
+            try
+            {
+                output += String.Format(FORMAT_WNNT, dt.ToFileTime()) + RTN;
+            }
+            catch (Exception ex)
+            {
+                output += String.Format(FORMAT_WNNT, ex.ToString()) + RTN;
+            }
+
+        }
+
+        #region <Event Handlers>
+        private void Form1_Load(object sender, EventArgs e)
+        {
+            SetNow();
+        }
+
+        private void cbxCulture_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            int selectedIndex = cbxCulture.SelectedIndex;
+            var currentCulture = cultures[selectedIndex];
+            Thread.CurrentThread.CurrentCulture = currentCulture;
+            toolTip1.SetToolTip(cbxCulture, currentCulture.Name);
+        }
+
+        private void btnNow_Click(object sender, EventArgs e)
+        {
+            SetNow();
+            //btnConv1.PerformClick();
+        }
+
+        private void btnJustTime_Click(object sender, EventArgs e)
+        {
+            var dt = dtpInput1.Value;
+            dt = new DateTime(dt.Year, dt.Month, dt.Day, 0, 0, 0);
+            dtpInput1.Value = dt;
+            //btnConv1.PerformClick();
+        }
+
+        private void btnConv1_Click(object sender, EventArgs e) // Readable
+        {
+            DateTime dt = dtpInput1.Value;
+            string output = "";
+            MakeOutput(dt, ref output);
             tbxOutput1.Text += output;
             ScrollToEnd(tbxOutput1);
         }
 
-        private void btnConv2_Click(object sender, EventArgs e)
+        private void btnConv2_Click(object sender, EventArgs e) // C# Ticks
         {
             string sTicks = tbxInput2.Text;
             long lTicks;
@@ -222,32 +255,7 @@ namespace DateTimeConverter
             if (long.TryParse(sTicks, out lTicks))
             {
                 dt = new DateTime(lTicks);
-                output += String.Format(FORMAT_READ, ToReadable(dt)) + RTN;
-                output += String.Format(FORMAT_TICK, sTicks) + RTN;
-                if (IsNtpCompatible(dt))
-                {
-                    output += String.Format(FORMAT_NTPT, ToNtp(dt)) + RTN;
-                }
-                else
-                {
-                    output += String.Format(FORMAT_NTPT, ERROR_DOMAIN) + RTN;
-                }
-                if (IsUnixEpochCompatible(dt))
-                {
-                    output += String.Format(FORMAT_UNIX, ToUnixEpoch(dt)) + RTN;
-                }
-                else
-                {
-                    output += String.Format(FORMAT_UNIX, ERROR_DOMAIN) + RTN;
-                }
-                try
-                {
-                    output += String.Format(FORMAT_EXEL, dt.ToOADate()) + RTN;
-                }
-                catch (Exception ex)
-                {
-                    output += String.Format(FORMAT_EXEL, ex.ToString()) + RTN;
-                }
+                MakeOutput(dt, ref output);
             }
             else
             {
@@ -257,7 +265,7 @@ namespace DateTimeConverter
             ScrollToEnd(tbxOutput1);
         }
 
-        private void btnConv3_Click(object sender, EventArgs e)
+        private void btnConv3_Click(object sender, EventArgs e) // NTP
         {
             string sNtp = tbxInput3.Text;
             UInt32 uNtp;
@@ -266,25 +274,7 @@ namespace DateTimeConverter
             if (UInt32.TryParse(sNtp, out uNtp))
             {
                 dt = FromNtp(uNtp);
-                output += String.Format(FORMAT_READ, ToReadable(dt)) + RTN;
-                output += String.Format(FORMAT_TICK, dt.Ticks) + RTN;
-                output += String.Format(FORMAT_NTPT, sNtp) + RTN;
-                if (IsUnixEpochCompatible(dt))
-                {
-                    output += String.Format(FORMAT_UNIX, ToUnixEpoch(dt)) + RTN;
-                }
-                else
-                {
-                    output += String.Format(FORMAT_UNIX, ERROR_DOMAIN) + RTN;
-                }
-                try
-                {
-                    output += String.Format(FORMAT_EXEL, dt.ToOADate()) + RTN;
-                }
-                catch (Exception ex)
-                {
-                    output += String.Format(FORMAT_EXEL, ex.ToString()) + RTN;
-                }
+                MakeOutput(dt, ref output);
             }
             else
             {
@@ -294,7 +284,7 @@ namespace DateTimeConverter
             ScrollToEnd(tbxOutput1);
         }
 
-        private void btnConv4_Click(object sender, EventArgs e)
+        private void btnConv4_Click(object sender, EventArgs e) // UNIX
         {
             string sUnix = tbxInput4.Text;
             UInt32 uUnix;
@@ -303,25 +293,7 @@ namespace DateTimeConverter
             if (UInt32.TryParse(sUnix, out uUnix))
             {
                 dt = FromUnixEpoch(uUnix);
-                output += String.Format(FORMAT_READ, ToReadable(dt)) + RTN;
-                output += String.Format(FORMAT_TICK, dt.Ticks) + RTN;
-                if (IsNtpCompatible(dt))
-                {
-                    output += String.Format(FORMAT_NTPT, ToNtp(dt)) + RTN;
-                }
-                else
-                {
-                    output += String.Format(FORMAT_NTPT, ERROR_DOMAIN) + RTN;
-                }
-                output += String.Format(FORMAT_UNIX, sUnix) + RTN;
-                try
-                {
-                    output += String.Format(FORMAT_EXEL, dt.ToOADate()) + RTN;
-                }
-                catch (Exception ex)
-                {
-                    output += String.Format(FORMAT_EXEL, ex.ToString()) + RTN;
-                }
+                MakeOutput(dt, ref output);
             }
             else
             {
@@ -331,7 +303,7 @@ namespace DateTimeConverter
             ScrollToEnd(tbxOutput1);            
         }
 
-        private void btnConv5_Click(object sender, EventArgs e)
+        private void btnConv5_Click(object sender, EventArgs e) // Excel
         {
             string sExcel = tbxInput5.Text;
             double dExcel;
@@ -341,25 +313,7 @@ namespace DateTimeConverter
             {
                 dExcel = double.Parse(sExcel);
                 dt = DateTime.FromOADate(dExcel);
-                output += String.Format(FORMAT_READ, ToReadable(dt)) + RTN;
-                output += String.Format(FORMAT_TICK, dt.Ticks) + RTN;
-                if (IsNtpCompatible(dt))
-                {
-                    output += String.Format(FORMAT_NTPT, ToNtp(dt)) + RTN;
-                }
-                else
-                {
-                    output += String.Format(FORMAT_NTPT, ERROR_DOMAIN) + RTN;
-                }
-                if (IsUnixEpochCompatible(dt))
-                {
-                    output += String.Format(FORMAT_UNIX, ToUnixEpoch(dt)) + RTN;
-                }
-                else
-                {
-                    output += String.Format(FORMAT_UNIX, ERROR_DOMAIN) + RTN;
-                }
-                output += String.Format(FORMAT_EXEL, sExcel) + RTN;
+                MakeOutput(dt, ref output);
             }
             catch (Exception)
             {
@@ -367,6 +321,26 @@ namespace DateTimeConverter
             }
             tbxOutput1.Text += output;
             ScrollToEnd(tbxOutput1);
+        }
+
+        private void btnConv6_Click(object sender, EventArgs e) // Win NT
+        {
+            string sTicks = tbxInput6.Text;
+            long lTicks;
+            DateTime dt;
+            string output = "";
+            if (long.TryParse(sTicks, out lTicks))
+            {
+                dt = DateTime.FromFileTime(lTicks);
+                MakeOutput(dt, ref output);
+            }
+            else
+            {
+                output = String.Format("Invalid input: {0}", sTicks) + RTN;
+            }
+            tbxOutput1.Text += output;
+            ScrollToEnd(tbxOutput1);
+
         }
 
         private void btnCopy_Click(object sender, EventArgs e)
@@ -388,6 +362,6 @@ namespace DateTimeConverter
             System.Diagnostics.Process.Start(hyperLink);
         }
 
-        #endregion </イベントハンドラ>
+        #endregion </Event Handlers>
     }
 }
